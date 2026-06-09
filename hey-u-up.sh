@@ -4,13 +4,13 @@ set -u
 
 # Preset
 NTFY_SERVER="https://ntfy.sh"
-NOTIF_COUNT_BEFORE_COOLDOWN=2
-CURL_TIMEOUT=10
+NOTIF_COUNT_BEFORE_COOLDOWN=3
+CURL_TIMEOUT=20
 
 # Customizable via flags
 NTFY_TOPIC=""
 WATCH_URL=""
-INTERVAL_SECONDS=60
+INTERVAL_SECONDS=1800
 GREP_TEXT=""
 COOLDOWN_SECONDS=$((8 * 60 * 60))
 
@@ -24,8 +24,8 @@ Required:
   -t NTFY_TOPIC       NTFY topic to publish alerts to
 
 Options:
-  -i SECONDS          Check interval in seconds, default 60 seconds
-  -c SECONDS          Cooldown seconds before notifying again, default 28800 (8 hours) 
+  -i SECONDS          Check interval in seconds, default 1800 seconds (30 minutes)
+  -c SECONDS          Cooldown seconds before notifying again, default 28800 (8 hours)
   -g TEXT             Optional text to search for in response body
 
 Examples:
@@ -138,7 +138,6 @@ notifications_in_current_outage=0
 last_notification_time=0
 
 echo "Monitoring $WATCH_URL every $INTERVAL_SECONDS seconds..."
-[[ -n "$GREP_TEXT" ]] && echo "Also checking for text: $GREP_TEXT"
 
 while true; do
   timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
