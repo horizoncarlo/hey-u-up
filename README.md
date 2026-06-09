@@ -1,3 +1,7 @@
+## hey-u-up 
+#### Cheap and Easy Website Monitor
+
+```
 Usage:
   ./hey-u-up.sh -u URL -t NTFY_TOPIC [options]
 
@@ -14,3 +18,4 @@ Examples:
   ./hey-u-up.sh -u https://example.com -t my-alert-topic
 
   ./hey-u-up.sh -u https://example.com -t my-alert-topic -i 300 -c 3600 -g "Welcome"
+```
