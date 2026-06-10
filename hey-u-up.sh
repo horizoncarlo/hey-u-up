@@ -13,6 +13,7 @@ WATCH_URL=""
 INTERVAL_SECONDS=1800
 GREP_TEXT=""
 COOLDOWN_SECONDS=$((8 * 60 * 60))
+RUN_ONCE=false
 
 usage() {
   cat <<EOF
@@ -24,27 +25,18 @@ Required:
   -t NTFY_TOPIC       NTFY topic to publish alerts to
 
 Options:
+  -1                  Run the script ONCE instead of an interval, then exit (useful in cron/systemctl timers)
   -i SECONDS          Check interval in seconds, default 1800 seconds (30 minutes)
   -c SECONDS          Cooldown seconds before notifying again, default 28800 (8 hours)
   -g TEXT             Optional text to search for in response body
 
 Examples:
-  $0 -u https://example.com -t my-alert-topic
+  Basic:     $0 -u https://example.com -t my-alert-topic
 
-  $0 -u https://example.com -t my-alert-topic -i 300 -c 3600 -g "Welcome"
+  Customize: $0 -u https://example.com -t my-alert-topic -i 300 -c 3600 -g "Welcome"
+
+  Run once:  $0 -u https://example.com -t my-alert-topic -1
 EOF
-}
-
-notify() {
-  local message="$1"
-
-  curl -fsS \
-    -H "Title: Monitored Website DOWN" \
-    -H "Priority: high" \
-    -d "$message" \
-    "$NTFY_SERVER/$NTFY_TOPIC" >/dev/null || {
-      echo "Warning: failed to send NTFY notification" >&2
-    }
 }
 
 check_site() {
@@ -97,8 +89,70 @@ check_site() {
   return 0
 }
 
-while getopts ":u:t:i:c:g:" opt; do
+run_and_notify() {
+  local output
+  local timestamp
+  local now
+  local should_notify=false
+
+  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  if output="$(check_site)"; then
+    echo "[$timestamp] $output"
+
+    if [[ "$failure_streak" -gt 0 ]]; then
+      echo "[$timestamp] Site recovered"
+    fi
+
+    failure_streak=0
+    notifications_in_current_outage=0
+    last_notification_time=0
+    return 0
+  fi
+
+  echo "[$timestamp] $output"
+
+  failure_streak=$((failure_streak + 1))
+  now="$(date +%s)"
+
+  should_notify=false
+
+  # Notify on the first X failed cycles of an outage
+  if [[ "$RUN_ONCE" == true ]]; then
+    should_notify=true
+
+  elif [[ "$notifications_in_current_outage" -lt "$NOTIF_COUNT_BEFORE_COOLDOWN" ]]; then
+    should_notify=true
+
+  # After that, notify again only after the cooldown period
+  elif [[ $((now - last_notification_time)) -ge "$COOLDOWN_SECONDS" ]]; then
+    should_notify=true
+  fi
+
+  if [[ "$should_notify" == true ]]; then
+    curl -fsS \
+      -H "Title: Monitored Website DOWN" \
+      -H "Priority: high" \
+      -d "URL: $WATCH_URL
+Time: $timestamp
+$output" \
+      "$NTFY_SERVER/$NTFY_TOPIC" >/dev/null || {
+        echo "Warning: failed to send NTFY notification" >&2
+      }
+
+    notifications_in_current_outage=$((notifications_in_current_outage + 1))
+    last_notification_time="$now"
+    echo "[$timestamp] Notification sent"
+  else
+    echo "[$timestamp] Notification suppressed (will send again in $COOLDOWN_SECONDS seconds)"
+  fi
+
+  return 1
+}
+
+while getopts ":1u:t:i:c:g:" opt; do
   case "$opt" in
+    1) RUN_ONCE=true ;;
     u) WATCH_URL="$OPTARG" ;;
     t) NTFY_TOPIC="$OPTARG" ;;
     i) INTERVAL_SECONDS="$OPTARG" ;;
@@ -137,50 +191,14 @@ failure_streak=0
 notifications_in_current_outage=0
 last_notification_time=0
 
+if [[ "$RUN_ONCE" == true ]]; then
+  echo "Checking $WATCH_URL once for status..."
+  run_and_notify
+  exit $?
+fi
+
 echo "Monitoring $WATCH_URL every $INTERVAL_SECONDS seconds..."
-
 while true; do
-  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-
-  if output="$(check_site)"; then
-    echo "[$timestamp] $output"
-
-    if [[ "$failure_streak" -gt 0 ]]; then
-      echo "[$timestamp] Site recovered"
-    fi
-
-    failure_streak=0
-    notifications_in_current_outage=0
-    last_notification_time=0
-  else
-    echo "[$timestamp] $output"
-
-    failure_streak=$((failure_streak + 1))
-    now="$(date +%s)"
-
-    should_notify=false
-
-    # Notify on the first two failed cycles of an outage
-    if [[ "$notifications_in_current_outage" -lt "$NOTIF_COUNT_BEFORE_COOLDOWN" ]]; then
-      should_notify=true
-
-    # After that, notify again only after the cooldown period
-    elif [[ $((now - last_notification_time)) -ge "$COOLDOWN_SECONDS" ]]; then
-      should_notify=true
-    fi
-
-    if [[ "$should_notify" == true ]]; then
-      notify "URL: $WATCH_URL
-Time: $timestamp
-$output"
-
-      notifications_in_current_outage=$((notifications_in_current_outage + 1))
-      last_notification_time="$now"
-      echo "[$timestamp] Notification sent"
-    else
-      echo "[$timestamp] Notification suppressed (will send again in $COOLDOWN_SECONDS seconds)"
-    fi
-  fi
-
+  run_and_notify
   sleep "$INTERVAL_SECONDS"
 done
